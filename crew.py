@@ -6,32 +6,23 @@
    找不到 coworker 只好自己做完」的問題。）
 - memory：跨輪對話記憶。不能用 embedder dict 走 openai 相容協定指向 NVIDIA —
   crewai 底層是 chromadb 的 OpenAI client，傳不了 NVIDIA asymmetric embedding
-  模型必需的 input_type 參數（會 400）。改傳 Memory 實例：embedder 用專案既有的
-  NVIDIAEmbeddings 包成 callable，llm 也指向 NVIDIA（Memory 預設 gpt-5.4-mini
-  會要求 OPENAI_API_KEY）。
+  模型必需的 input_type 參數（會 400）。改傳 Memory 實例，embedder 用官方支援的
+  「custom callable」直接接 NVIDIA（見 embed.py，不經 langchain）；llm 也指向
+  NVIDIA（Memory 預設 gpt-5.4-mini 會要求 OPENAI_API_KEY）。
 """
-
-import os
 
 from crewai import Crew, Process
 from crewai.memory.unified_memory import Memory
-from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+
+from embed import embed
 
 
 def _build_memory(llm) -> Memory:
-    # NVIDIA 的 asymmetric embedding 會擋官方 embedder dict 路徑（chromadb OpenAI client
-    # 傳不了 input_type → 400），故改用官方支援的「custom callable embedder」直接接 NVIDIA。
+    # 官方支援的 custom callable embedder，直接接 NVIDIA（見 embed.py）。
+    # 記憶存/查都用 passage 向量，asymmetric 的 query/passage 區分先不做，檢索品質有感再說。
     # 不清存檔：官方 memory 本意就是跨 session 持久化（要重置就手動刪 memory 資料夾）。
-    nv = NVIDIAEmbeddings(
-        model=os.environ["EMBEDDING_MODEL"],
-        api_key=os.environ["NVIDIA_API_KEY"],
-        base_url=os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        truncate="END",  # 模型上限 512 tokens，超長記憶內容由伺服器端截斷而非 400
-    )
-    # ponytail: 存取都用 passage 向量（embed_documents），asymmetric 模型的
-    # query/passage 區分先不做，檢索品質有感再說
     return Memory(
-        embedder=lambda texts: nv.embed_documents(list(texts)),
+        embedder=lambda texts: embed(list(texts), input_type="passage"),
         llm=llm,
     )
 

@@ -6,12 +6,9 @@ litellm  # crewai 1.x 對非原生 provider（如 NVIDIA NIM 的 openai/ 前綴�
 # MCP 客戶端
 mcp
 
-# 沿用 Lab 4 生態的 RAG 套件
-langchain-milvus>=0.2
+# RAG：原生 pymilvus + openai 相容端點打 NVIDIA embedding（不經 langchain）
 pymilvus>=2.5,<2.6
-langchain-nvidia-ai-endpoints
-langchain-community
-langchain-text-splitters
+openai  # 直接呼叫 NVIDIA embedding 端點（見 embed.py）；本為 crewai/litellm 既有依賴
 
 python-dotenv
 
