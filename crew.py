@@ -45,6 +45,7 @@ def build_crew(manager, workers, task, llm) -> Crew:
         process=Process.hierarchical,
         manager_agent=manager,    # 自訂 manager
         memory=_build_memory(llm),
+        tracing=True,  # CrewAI 自家 tracing：托管的執行時間軸/token/成本視圖（首次跑會要登入 CrewAI 帳號）
         skills=["skills/common"],  # 全員共用的 skills；角色專屬的在 agents.py 各自掛載
         max_rpm=20,  # 全 crew 共用的節流：超過每分鐘 20 次 LLM 呼叫就等待，避開 NVIDIA 免費額度 429
         output_log_file="output/執行過程.json",  # 完整過程：每個 agent 的任務與產出（.json 結尾存結構化格式）
