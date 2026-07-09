@@ -5,15 +5,10 @@
 - manager 以 manager_agent 傳入 Crew，不放進 agents 清單（見 crew.py）。
 """
 
-from itertools import cycle
-
 from crewai import Agent
 
 
-def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
-    # 一把 key 一顆 LLM，round-robin 分給各 agent：不同 agent 用不同帳號，429 自然分散。
-    # next(pick) 每呼叫一次取下一顆，繞回頭；6 個 agent、3 顆 LLM → 每顆由 2 個 agent 共用。
-    pick = cycle(llms)
+def build_agents(llm, rag_tool, tavily_tools, meteo_tools, fx_tools):
     preference_analyst = Agent(
         role="偏好分析師",
         goal="從使用者過往台灣旅遊紀錄，推斷其對住宿、景點、飲食、預算與旅遊步調的個人偏好",
@@ -23,7 +18,7 @@ def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
         ),
         tools=[rag_tool],
         skills=["skills/preference"],  # 專屬 skill：RAG 檢索紀律
-        llm=next(pick),
+        llm=llm,
         allow_delegation=False,
         max_iter=3,   # 每個任務最多 3 圈思考迴圈，嚴控 LLM 呼叫次數
         verbose=True,
@@ -38,7 +33,7 @@ def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
         ),
         tools=tavily_tools,
         skills=["skills/research"],  # 專屬 skill：搜尋查證紀律
-        llm=next(pick),
+        llm=llm,
         allow_delegation=False,
         max_iter=6,   # 搜尋型 agent 需多次查詢，3 圈會在完成前被掐斷
         verbose=True,
@@ -50,7 +45,7 @@ def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
         backstory="你負責提供準確的天氣資訊，讓行程能依降雨機率與氣溫調整室內外安排。",
         skills=["skills/weather"],  # 專屬 skill：weather_forecast 參數鐵則
         tools=meteo_tools,
-        llm=next(pick),
+        llm=llm,
         allow_delegation=False,
         max_iter=6,   # 工具參數試錯需要空間，3 圈會被 schema 錯誤吃光
         verbose=True,
@@ -62,7 +57,7 @@ def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
         backstory="你負責提供最新匯率，讓預算數字精準可信，換算過程清楚可查。",
         tools=fx_tools,
         skills=["skills/fx"],  # 專屬 skill：匯率精度紀律
-        llm=next(pick),
+        llm=llm,
         allow_delegation=False,
         max_iter=3,   # 每個任務最多 3 圈思考迴圈，嚴控 LLM 呼叫次數
         verbose=True,
@@ -77,7 +72,7 @@ def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
         ),
         tools=[],  # 無工具，只做彙整
         skills=["skills/itinerary"],  # 專屬 skill：統整一致性紀律
-        llm=next(pick),
+        llm=llm,
         allow_delegation=False,
         max_iter=3,   # 每個任務最多 3 圈思考迴圈，嚴控 LLM 呼叫次數
         verbose=True,
@@ -95,7 +90,7 @@ def build_agents(llms, rag_tool, tavily_tools, meteo_tools, fx_tools):
             "與資訊正確性；只要發現預算不可行、費用矛盾或住宿偏離偏好，就退回要求修訂，"
             "直到合格才交付最終行程。"
         ),
-        llm=next(pick),
+        llm=llm,
         skills=["skills/manager"],  # 專屬 skill：委派與審查紀律
         allow_delegation=True,  # manager 必須能委派
         max_iter=12,  # 一圈只能做一個動作：委派 5 位專才 + 審查彙整的最低限度，再低會跳過專才

@@ -31,16 +31,15 @@ def _api_keys() -> list[str]:
     return keys
 
 
-def build_llm(api_key: str) -> LLM:
-    # openai/ 前綴讓 litellm 走 OpenAI 相容端點；base_url 指向 NVIDIA NIM
+def build_llm() -> LLM:
+    # openai/ 前綴讓 litellm 走 OpenAI 相容端點；base_url 指向 NVIDIA NIM。
+    # 單把 key：全 agent 共用 NVIDIA_API_KEY（多帳號輪替版在 feat/multi-key-per-agent）。
     return LLM(
         model=f"openai/{os.environ['CHAT_MODEL']}",
         base_url=os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        api_key=api_key,
+        api_key=os.environ["NVIDIA_API_KEY"],
         temperature=0.3,
-        # 調低：litellm 的重試在單次呼叫內綁同一把 key，429 時重試幾乎必再 429，
-        # 只是白燒退避預算。設 1（共 2 次）失敗即返回，讓下一次呼叫 round-robin 換到新 key。
-        num_retries=1,
+        num_retries=1,  # 429 快速失敗（免費額度重試多半再 429，白燒退避預算）
         # NVIDIA 會無預警下架模型（跑到一半 404 Function not found）；
         # 主模型失敗時 litellm 自動改打備用模型，沿用同一組 base_url / api_key
         fallbacks=[f"openai/{os.environ['FALLBACK_MODEL']}"] if os.environ.get("FALLBACK_MODEL") else None,
@@ -56,21 +55,19 @@ def main() -> None:
     os.environ.setdefault("OPENAI_API_KEY", os.environ["NVIDIA_API_KEY"])
     os.environ.setdefault("OPENAI_API_BASE", os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"))
 
-    # 一把 key 一顆 LLM；build_agents 以 round-robin 分給各 agent，把 429 分散到各帳號
-    llms = [build_llm(k) for k in _api_keys()]
+    llm = build_llm()
     rag_tool = PreferenceSearchTool(retriever=build_retriever())
 
     adapters, bundles = start_mcp_adapters()
     try:
         manager, workers = build_agents(
-            llms,
+            llm,
             rag_tool,
             bundles["tavily"],
             bundles["open_meteo"],
             bundles["frankfurter"],
         )
-        # guardrail 與 memory 固定用第一把 key（memory embedding 本來就吃 KEY1）
-        crew = build_crew(manager, workers, build_task(llms[0]), llms[0])
+        crew = build_crew(manager, workers, build_task(llm), llm)
         run_chat(crew)
     finally:
         for adapter in adapters:
