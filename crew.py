@@ -11,16 +11,22 @@
   NVIDIA（Memory 預設 gpt-5.4-mini 會要求 OPENAI_API_KEY）。
 """
 
+import os
+import shutil
+
 from crewai import Crew, Process
 from crewai.memory.unified_memory import Memory
+from crewai_core.paths import db_storage_path
 
 from embed import embed
 
 
 def _build_memory(llm) -> Memory:
+    # 單 session 記憶：啟動時清掉上次存檔。官方 memory 預設跨 session 持久化，但對「各自
+    # 獨立的規劃請求」，舊 run 的念頭與行程細節會滲進新 run 變噪音，故只保留單次啟動內的記憶。
+    shutil.rmtree(os.path.join(db_storage_path(), "memory"), ignore_errors=True)
     # 官方支援的 custom callable embedder，直接接 NVIDIA（見 embed.py）。
     # 記憶存/查都用 passage 向量，asymmetric 的 query/passage 區分先不做，檢索品質有感再說。
-    # 不清存檔：官方 memory 本意就是跨 session 持久化（要重置就手動刪 memory 資料夾）。
     return Memory(
         embedder=lambda texts: embed(list(texts), input_type="passage"),
         llm=llm,
