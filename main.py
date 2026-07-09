@@ -16,7 +16,6 @@ from agents import build_agents
 from tasks import build_task
 from crew import build_crew
 from chat import run_chat
-from key_rotation import install_key_rotation
 
 
 def _api_keys() -> list[str]:
@@ -32,14 +31,12 @@ def _api_keys() -> list[str]:
     return keys
 
 
-def build_llm() -> LLM:
-    keys = _api_keys()
-    install_key_rotation(keys)  # 每次 LLM 呼叫 round-robin 換 key，分散 429
+def build_llm(api_key: str) -> LLM:
     # openai/ 前綴讓 litellm 走 OpenAI 相容端點；base_url 指向 NVIDIA NIM
     return LLM(
         model=f"openai/{os.environ['CHAT_MODEL']}",
         base_url=os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        api_key=keys[0],  # 兜底：拷貝遺失 params 時用第一把
+        api_key=api_key,
         temperature=0.3,
         # 調低：litellm 的重試在單次呼叫內綁同一把 key，429 時重試幾乎必再 429，
         # 只是白燒退避預算。設 1（共 2 次）失敗即返回，讓下一次呼叫 round-robin 換到新 key。
@@ -59,19 +56,21 @@ def main() -> None:
     os.environ.setdefault("OPENAI_API_KEY", os.environ["NVIDIA_API_KEY"])
     os.environ.setdefault("OPENAI_API_BASE", os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"))
 
-    llm = build_llm()
+    # 一把 key 一顆 LLM；build_agents 以 round-robin 分給各 agent，把 429 分散到各帳號
+    llms = [build_llm(k) for k in _api_keys()]
     rag_tool = PreferenceSearchTool(retriever=build_retriever())
 
     adapters, bundles = start_mcp_adapters()
     try:
         manager, workers = build_agents(
-            llm,
+            llms,
             rag_tool,
             bundles["tavily"],
             bundles["open_meteo"],
             bundles["frankfurter"],
         )
-        crew = build_crew(manager, workers, build_task(llm), llm)
+        # guardrail 與 memory 固定用第一把 key（memory embedding 本來就吃 KEY1）
+        crew = build_crew(manager, workers, build_task(llms[0]), llms[0])
         run_chat(crew)
     finally:
         for adapter in adapters:
