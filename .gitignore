@@ -1,0 +1,10 @@
+# 秘鑰（含真實 NVIDIA / Tavily key，任何層級的 .env 都不進版控）
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# 執行產物
+output/
