@@ -12,18 +12,16 @@
 """
 
 import os
-import shutil
 
 from crewai import Crew, Process
 from crewai.memory.unified_memory import Memory
-from crewai_core.paths import db_storage_path
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
 
 
 def _build_memory(llm) -> Memory:
-    # 記憶只保留單次啟動：啟動時清掉上次的存檔（順帶免疫換 EMBEDDING_MODEL 的維度衝突）
-    shutil.rmtree(os.path.join(db_storage_path(), "memory"), ignore_errors=True)
-
+    # NVIDIA 的 asymmetric embedding 會擋官方 embedder dict 路徑（chromadb OpenAI client
+    # 傳不了 input_type → 400），故改用官方支援的「custom callable embedder」直接接 NVIDIA。
+    # 不清存檔：官方 memory 本意就是跨 session 持久化（要重置就手動刪 memory 資料夾）。
     nv = NVIDIAEmbeddings(
         model=os.environ["EMBEDDING_MODEL"],
         api_key=os.environ["NVIDIA_API_KEY"],
