@@ -1,16 +1,16 @@
 # Lab5：Multi-Agent AI Agent — crewAI 框架
 
-通用旅遊助理。一位 manager 依使用者問題，動態協調偏好分析師、情報研究員與行程規劃師。
+可連續對話的通用旅遊助理。一位 manager 依每輪問題與先前對話，動態協調偏好分析師、情報研究員與行程規劃師。
 
 ## 環境需求
 
-- **Python 3.13**（crewai 需要 `>=3.10,<3.14`，不能用 Lab4 的 3.14）
+- **Python 3.12**（crewai 需要 `>=3.10,<3.14`，不能用 Lab4 的 3.14）
 - Node.js 18+（tavily 與 weather-mcp 走 `npx` 啟動；frankfurter 是遠端 server）
 
 ## 安裝
 
 ```powershell
-py -3.13 -m venv venv
+python -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
@@ -25,9 +25,11 @@ pip install -r requirements.txt
 ```powershell
 python main.py
 # 範例輸入：我下週二想去大阪三天兩夜
+# 可以繼續輸入：第二天改輕鬆一點
+# 輸入 exit、quit、離開或結束可關閉
 ```
 
-結果會直接顯示在終端機。**必須在專案目錄下執行**，`knowledge/` 是相對路徑。
+結果會直接顯示在終端機，並保留同一次執行期間的近期對話背景。**必須在專案目錄下執行**，`knowledge/` 是相對路徑。
 
 ## 檔案結構
 
@@ -35,11 +37,11 @@ python main.py
 AIAgentCrewAI/
 ├── .env                 金鑰與模型名稱
 ├── requirements.txt
-├── main.py              入口：讀輸入 → 啟動工具 → kickoff → 關閉工具
+├── main.py              入口：啟動工具 → while 多輪輸入與歷史 → 關閉工具
 ├── crew.py              定義通用 task 並組裝 hierarchical Crew
 ├── agents.py            一位 manager 與三位 worker、LLM、知識庫、embedder
 ├── tools.py             MCP server 設定 + crewAI 參數驗證的修補
-├── test_tool_args.py    tools.py 那段修補的行為測試（14 個 case）
+├── test_tool_args.py    tools.py 那段修補的行為測試（16 個 case）
 └── knowledge/           旅遊紀錄 .txt
 ```
 
@@ -48,13 +50,10 @@ AIAgentCrewAI/
 ## 執行流程
 
 ```
-main.py  讀入需求與今天日期
+main.py  啟動 MCP；用 while + list 保存對話
    │
    ▼
-tools.py  啟動三個 MCP server，過濾出 3 個工具
-   │
-   ▼
-crew.py  組裝 Crew（manager + 3 worker + 1 個通用 task）
+crew.py  每輪建立新的 Crew（manager + 3 worker + 1 個通用 task）
    │
    ▼
 旅遊規劃經理  分析問題，只委派必要的專員並整合結果
@@ -62,7 +61,14 @@ crew.py  組裝 Crew（manager + 3 worker + 1 個通用 task）
    ├─ 需要個人偏好 ─→ 偏好分析師（讀 knowledge/）
    ├─ 需要即時情報 ─→ 情報研究員（用 MCP 工具）
    └─ 需要完整行程 ─→ 行程規劃師（整合前兩位專員的結果）
+   │
+   ▼
+main.py  把回答加入 history 並等待下一輪；MCP 不會重新啟動
 ```
+
+Python 迴圈只管理連續對話，不預先固定 Agent 工作流程。每一輪真正需要呼叫哪些專員，
+仍由 hierarchical manager 現場判斷。這個基礎版本會把本次執行的完整歷史
+交給 Crew；對話很長時 token 會隨之增加，且關閉程式後不會跨程序保存 session。
 
 ## MCP servers
 
