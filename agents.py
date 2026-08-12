@@ -19,8 +19,19 @@ from pathlib import Path
 
 from crewai import LLM, Agent
 from crewai.knowledge.source.text_file_knowledge_source import TextFileKnowledgeSource
+from crewai.skills import discover_skills
+from crewai_tools import FileWriterTool
 
 # ── 模型與知識庫 ────────────────────────────────────
+
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+EXPORTS_DIR = Path(__file__).resolve().parent / "exports"
+SKILL_CATALOG = {skill.name: skill for skill in discover_skills(SKILLS_DIR)}
+
+
+def select_skills(*names: str) -> list:
+    """從專案 Skill 目錄挑出特定 Agent 能看到的 metadata-only Skills。"""
+    return [SKILL_CATALOG[name] for name in names]
 
 # 旅遊紀錄放在 knowledge/ 目錄，crewAI 解析路徑時會自動補上 knowledge/ 前綴，
 # 所以這裡給的是「相對於 knowledge/ 的檔名」。
@@ -40,18 +51,28 @@ EMBEDDER = {
 }
 
 
-def build_llm() -> LLM:
-    """四個 agent 共用的 LLM。
+# 原本的 NVIDIA NIM 連線（保留供日後切換）：
+# def build_llm() -> LLM:
+#     return LLM(
+#         model="openai/nvidia/nemotron-3-ultra-550b-a55b",
+#         base_url=os.getenv("NVIDIA_BASE_URL"),
+#         api_key=os.getenv("NVIDIA_API_KEY"),
+#     )
 
-    model 前綴用 openai/ 並指定 base_url，走 NVIDIA NIM 的 OpenAI 相容端點。
-    max_tokens 一定要設：不設上限時，最後那次組行程的呼叫（prompt 最長、
-    輸出也最長）容易讓 NVIDIA 的閘道等到超時回 504。
-    """
+
+def build_llm() -> LLM:
+    """建立所有 Agent 共用的 CLI Proxy API LLM。"""
+    base = os.getenv("CLI_PROXY_BASE_URL")
+    key = os.getenv("CLI_PROXY_API_KEY")
     return LLM(
         model=f"openai/{os.getenv('CHAT_MODEL')}",
-        base_url=os.getenv("NVIDIA_BASE_URL"),
-        api_key=os.getenv("NVIDIA_API_KEY"),
+        base_url=base,
+        api_base=base,
+        api_key=key,
+        reasoning_effort="low",
         max_tokens=4096,
+        timeout=60,
+        stream=True,
     )
 
 
@@ -84,13 +105,14 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
             "只保留與本次問題直接相關的最多五項偏好；每項用一句結論搭配一段最短的"
             "知識庫原文作為依據。全文控制在六百個中文字以內，不要重述完整旅遊史、"
             "貼出長篇原文、列出無關偏好或用不同說法重複同一結論。"
+            "交付內容使用純文字與換行，不使用 Markdown 標題、表格、粗體或項目符號。"
             "你是團隊裡唯一能存取使用者過往旅遊紀錄知識庫的人。"
         ),
         llm=llm,
         knowledge_sources=[TRAVEL_RECORDS],
         embedder=EMBEDDER,
         allow_delegation=False,
-        max_iter=8,  # 只查知識庫、不呼叫工具
+        max_iter=3,  # 只查知識庫，不需要多輪反覆整理
         verbose=True,
     )
 
@@ -110,9 +132,12 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
             "再從結果擷取行程日期；若超過工具最多 16 天的預報範圍，必須誠實註明"
             "尚無可靠預報，不可反覆呼叫或自行推測。匯率使用 get_rates；"
             "其餘景點、住宿、交通與票價使用 tavily_search。"
-            "每次受委派的工作最多呼叫 tavily_search 三次，應把相關資訊合併在同一個查詢中，"
-            "不得為每個景點各搜尋一次。Tavily server 已固定使用 ultra-fast 並限制三個來源，"
-            "不要嘗試修改 search_depth、max_results、raw content 或圖片相關參數。"
+            "每次 tavily_search 搜尋只能處理一個資訊目的。查詢中最多包含一至兩個景點或"
+            "實體，不得把所有候選景點塞入同一查詢。景點、住宿、交通、餐飲必須分開搜尋。"
+            "先以短查詢找候選，再只針對最終候選查官方時間、票價與交通。不得重複近似查詢；"
+            "結果不相關時最多改寫一次，之後回報資料不足。Tavily server 已固定使用"
+            "ultra-fast 並限制三個來源，不要嘗試修改 search_depth、max_results、"
+            "raw content 或圖片相關參數。"
             "呼叫 tavily_search 查一般旅遊資料時不要帶 time_range、start_date 或 end_date，"
             "查住宿時 query 必須包含目的地與入住日期。"
             "每一筆結果都要附上工具實際回傳的來源，不可創造網址或自行估算。"
@@ -124,18 +149,22 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
             "並用精簡自然語言說明每個主要推薦符合或衝突哪些偏好；不能搜尋完才把"
             "偏好文字附在結果後面。若是收到修正委派，應針對經理指出的缺口重新搜尋，"
             "避免再次提供已被判定不合適的候選項目。"
+            "交付內容使用純文字與換行，不使用 Markdown 標題、表格、粗體或項目符號。"
             "你是團隊裡唯一持有外部工具的人。"
         ),
         llm=llm,
         tools=tools,
         allow_delegation=False,
-        max_iter=25,  # 三個工具且 tavily 常需搜好幾輪，容錯空間留最大
+        max_iter=4,  # 限制搜尋輪數，避免單次研究持續擴張
         verbose=True,
     )
 
     itinerary_planner = Agent(
         role="個人化行程規劃師",
-        goal="綜合偏好分析與情報研究的結果，產出一份可以直接照著走的行程",
+        goal=(
+            "綜合偏好分析與情報研究的結果，產出一份可以直接照著走的行程；"
+            "使用者明確要求時，將既有完成版行程匯出成 Markdown 文件"
+        ),
         backstory=(
             "你是一位排行程的老手。你知道行程好不好，取決於動線順不順、"
             "每天的節奏會不會太趕、預算對不對得上。"
@@ -144,15 +173,25 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
             "產出完整行程時要包含每日時間、地點、交通、預估花費、預算總計與注意事項；"
             "使用者沒有提供日期或預算時必須清楚標示，不得自行假定。"
             "行程使用上午、下午、晚上等必要時段即可，不要製作逐半小時的超長表格。"
-            "全文原則上控制在三千五百個中文字以內；若內容取捨，優先確保所有天數、"
+            "全文原則上控制在兩千個中文字以內；若內容取捨，優先確保所有天數、"
             "交通、每日預算與總預算完整，再刪除重複說明、景點介紹與非必要備案。"
             "收到偏好摘要時，景點選擇、每日密度、交通方式與預算安排都必須實際反映"
             "偏好；若情報與偏好衝突，不得假裝符合，應清楚指出取捨。收到修正委派時，"
             "只修正經理指出的編排問題，同時保留已查證的來源與仍然正確的內容。"
+            "回答範圍必須符合使用者實際問題；單一景點問題不得擴張成完整行程。"
+            "一般規劃與修改結果使用純文字與換行，不使用 Markdown 標題、表格、粗體"
+            "或項目符號；需要列舉時使用阿拉伯數字編號。"
+            "只有使用者明確要求將既有行程匯出或儲存成 Markdown 文件時，才套用"
+            "itinerary-markdown-exporter Skill；匯出時只使用先前對話中的完成版行程，"
+            "不得重新搜尋或重新規劃。只有寫入 exports 的檔案內容可以使用 Markdown。"
+            "寫檔完成後只回傳 exports/ 開頭的實際相對路徑，不得把 Markdown 內文"
+            "放進 Agent 最終回答。"
         ),
         llm=llm,
+        tools=[FileWriterTool(base_dir=str(EXPORTS_DIR))],
+        skills=select_skills("itinerary-markdown-exporter"),
         allow_delegation=False,
-        max_iter=5,  # 無工具，純彙整與自審
+        max_iter=4,  # 一般彙整三輪；匯出時多一輪載入 Skill／寫檔
         verbose=True,
     )
 
@@ -168,14 +207,16 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
             "串接與把關。"
             "你手下有三位專才：旅遊偏好分析師（唯一能讀使用者旅遊紀錄的人）、"
             "旅遊情報研究員（唯一持有搜尋／天氣／匯率工具的人）、"
-            "個人化行程規劃師（無工具，負責彙整）。"
+            "個人化行程規劃師（負責彙整，並能把既有行程寫成 Markdown 檔案）。"
             "需要個人紀錄時委派偏好分析師；需要外部或即時資料時委派情報研究員；"
-            "只有完整行程需要彙整時才委派行程規劃師。"
+            "需要完整行程彙整或匯出既有行程時才委派行程規劃師。"
             "每次都要根據使用者問題現場決定工作路徑，不得把三位專才固定全部呼叫一遍。"
             "若任務附有先前對話背景，必須用它解析本輪的指涉、修改與否決內容；"
             "本輪最新要求優先，不得把整段歷史原樣重述給使用者。"
-            "純天氣、匯率、票價、營業時間等客觀問題通常不需要偏好分析；當使用者問"
-            "『適不適合我』、『依我的喜好』、推薦或個人化完整行程時，才需要偏好分析。"
+            "本系統的核心目的是從使用者過去在台灣的旅遊紀錄推導偏好，再將偏好套用到"
+            "日本旅遊規劃。凡是行程規劃，或景點、住宿、區域與活動推薦，都必須主動先"
+            "委派偏好分析師，不需要等待使用者說『依我的偏好』。只有純天氣、匯率、票價、"
+            "營業時間等不涉及選擇與推薦的單一客觀問題，才可以省略偏好分析。"
             "若偏好會影響外部候選項目的搜尋，必須先等待偏好分析完成，再把精簡偏好摘要"
             "放進情報研究員的委派內容；此情況不得讓偏好分析與情報搜尋平行執行。"
             "你自己看不到知識庫也沒有外部工具，所以不可憑空補資料，也不可要求使用者"
@@ -189,14 +230,21 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
             "若候選資料本身不符合偏好、資料不足或來源缺失，應把具體缺口告訴情報研究員並"
             "重新委派搜尋；若資料足夠但景點取捨、動線、節奏或預算編排不合理，應把具體問題"
             "告訴行程規劃師重新編排，不要浪費工具重新搜尋。"
-            "同一個使用者問題最多進行兩輪修正。每次修正都必須引用上一輪的具體問題，"
-            "不可無目的重做；若兩輪後仍受限於缺少關鍵條件或查不到可靠資料，直接對使用者"
+            "同一個使用者問題最多進行一輪修正。修正必須引用上一輪的具體問題，"
+            "不可無目的重做；若修正後仍受限於缺少關鍵條件或查不到可靠資料，直接對使用者"
             "說明限制與需要補充的條件。只有通過上述內部檢查後才可交付最終答案，且不得把"
             "委派、退件、審查、重試次數或『請重新產出』等內部過程寫進最終答案。"
+            "若使用者明確要求匯出先前已完成的行程，不要重新呼叫偏好分析或即時搜尋；"
+            "只把最近一次完成版行程交給個人化行程規劃師處理 Markdown 匯出。委派時"
+            "要求規劃師直接寫檔並且只回傳 exports/ 開頭的實際相對路徑，不得要求"
+            "規劃師回傳完整 Markdown。收到成功路徑後，最終回答只能原樣輸出該路徑，"
+            "不得重印文件內容或增加其他文字。"
+            "一般最終回答使用純文字與換行，不使用 Markdown 標題、表格、粗體或項目符號；"
+            "只有匯出的 .md 檔案內容可以使用 Markdown。"
         ),
         llm=llm,
         allow_delegation=True,  # manager 必須能委派
-        max_iter=20,  # hierarchical 下 manager 的 max_iter 是整體吞吐瓶頸
+        max_iter=10,  # 足夠完成三次委派與一次具體修正
         verbose=True,
     )
 

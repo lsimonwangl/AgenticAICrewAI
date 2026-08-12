@@ -35,7 +35,7 @@ from pydantic import ValidationError
 # 對策：先把 JSON 字串還原並移除值完全等於字串 'null' 的欄位，驗證失敗時
 # 丟掉「出錯且非必填」與「schema 沒有」的欄位再驗一次，最後剝掉 None。
 # 必填欄位若被移除，仍會在 pydantic 驗證時報錯，不會被靜靜吞掉。
-# 行為由 test_tool_args.py 的 16 個 case 涵蓋。
+# 行為由 test_tool_args.py 的 17 個 case 涵蓋。
 
 _original_validate_kwargs = BaseTool._validate_kwargs
 
@@ -78,7 +78,15 @@ def _validate_kwargs_dropping_bad_optionals(self, kwargs: dict) -> dict:
         validated = _original_validate_kwargs(
             self, {k: v for k, v in kwargs.items() if k not in drop}
         )
-    return {k: v for k, v in validated.items() if v is not None}
+    cleaned = {k: v for k, v in validated.items() if v is not None}
+    if self.name == "tavily_search":
+        # MCP 的 DEFAULT_PARAMETERS 會被模型明確傳入的參數覆蓋；因此在送出前
+        # 再做一次硬限制，避免單次搜尋回傳過多文字拖慢後續 LLM。
+        if "max_results" in cleaned:
+            cleaned["max_results"] = min(cleaned["max_results"], 3)
+        if "include_raw_content" in cleaned:
+            cleaned["include_raw_content"] = False
+    return cleaned
 
 
 BaseTool._validate_kwargs = _validate_kwargs_dropping_bad_optionals

@@ -117,9 +117,13 @@ check("字串 'False' 轉成 bool", search,
       {"query": "x", "include_raw_content": "False"},
       {"query": "x", "include_raw_content": False})
 
-check("字串 '10' 轉成 int", search,
+check("Tavily max_results 上限為 3", search,
       {"query": "x", "max_results": "10"},
-      {"query": "x", "max_results": 10})
+      {"query": "x", "max_results": 3})
+
+check("Tavily raw content 固定關閉", search,
+      {"query": "x", "include_raw_content": "True"},
+      {"query": "x", "include_raw_content": False})
 
 check("真的 list 原樣通過", rates,
       {"base": "JPY", "quotes": ["TWD"]},
