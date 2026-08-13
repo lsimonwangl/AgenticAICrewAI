@@ -1,132 +1,115 @@
-"""多輪對話主程式。
+"""使用 Conversational Flow 啟動個人化旅遊規劃系統。"""
 
-執行流程：
-    1. 載入 .env（必須在其他模組 import 之前，它們在載入時就會讀環境變數）
-    2. 啟動一次 MCP 工具
-    3. 用 while 迴圈接收多輪輸入，並用 list 保存歷史
-    4. 每一輪建立新的 hierarchical Crew，避免保留上一輪 Task 執行狀態
-    5. 離開對話時關掉 MCP 子程序
-
-跑法：venv\\Scripts\\Activate.ps1 後在專案目錄下 python main.py
-（一定要在專案目錄下執行，knowledge/ 是相對路徑）
-"""
+# ── 載入套件與專案模組 ──────────────────────────────
 
 from datetime import date
-from pathlib import Path
 
 from dotenv import load_dotenv
 
+from crewai import Flow
+from crewai.events.event_bus import crewai_event_bus
+from crewai.events.types.skill_events import SkillUsedEvent
+from crewai.events.utils.console_formatter import ConsoleFormatter
+from crewai.experimental.conversational import ConversationState
+from crewai.flow import listen
+
+from crew import build_crew
+from tools import start_mcp_tools
+
+# 載入模型、MCP 與知識庫連線所需的環境變數
 load_dotenv()
 
-from crewai.events.event_bus import crewai_event_bus  # noqa: E402
-from crewai.events.types.skill_events import SkillUsedEvent  # noqa: E402
-from crewai.events.utils.console_formatter import ConsoleFormatter  # noqa: E402
 
-from crew import build_crew  # noqa: E402
-from tools import start_mcp_tools  # noqa: E402
-
-WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"]
-MAX_HISTORY_MESSAGES = 4  # 最近兩輪 user/assistant 訊息
-CREW_COMPLETION_TIMEOUT_SECONDS = 10
-EXPORTS_DIR = Path(__file__).resolve().parent / "exports"
-
-SKILL_LABELS = {
-    "itinerary-markdown-exporter": "旅遊行程 Markdown 匯出",
-}
-
+# ── 顯示 Skill 套用紀錄 ─────────────────────────────
 
 @crewai_event_bus.on(SkillUsedEvent)
 def show_skill_usage(_, event: SkillUsedEvent) -> None:
-    """把條件式 Skill 的實際載入顯示在終端機，方便課堂觀察。"""
-    label = SKILL_LABELS.get(event.skill_name, event.skill_name)
-    agent_role = event.agent_role or "未知 Agent"
-    print(f"\n── 套用 Skill：{label}（{event.skill_name}）")
-    print(f"   執行 Agent：{agent_role}")
+    """在終端機顯示本輪實際套用的 Skill 與執行 Agent。"""
+    # 顯示 CrewAI 實際載入的 Skill 名稱
+    print(f"\n── 套用 Skill：{event.skill_name}")
+
+    # 顯示套用 Skill 的 Agent；事件未提供角色時顯示「未知 Agent」
+    print(f"   執行 Agent：{event.agent_role or '未知 Agent'}")
 
 
-def snapshot_markdown_exports() -> dict[Path, tuple[int, int]]:
-    """記錄現有 Markdown 匯出檔，供本輪結束後判斷是否真的寫檔。"""
-    if not EXPORTS_DIR.exists():
-        return {}
-    return {
-        path.resolve(): (path.stat().st_mtime_ns, path.stat().st_size)
-        for path in EXPORTS_DIR.glob("*.md")
-        if path.is_file()
-    }
+# ── 建立多輪對話 Flow ────────────────────────────────
+
+class TravelFlow(Flow[ConversationState]):
+    """保存對話歷史，並將每輪問題交給 Hierarchical Crew。"""
+
+    # 開啟 CrewAI 官方多輪對話功能，由 Flow 管理訊息與每輪執行狀態
+    conversational = True
+
+    # 保存 main() 啟動的 MCP 工具，供每輪建立的 Crew 共用
+    mcp_tools: list
+
+    def route_turn(self, context: dict) -> str:
+        """所有旅遊問題都交給 Crew，工作流程由 Manager 動態判斷。"""
+        return "travel"
+
+    @listen("travel")
+    def handle_travel(self) -> str:
+        """建立本輪 Crew，帶入問題與最近兩輪對話後回傳最終答案。"""
+        # Flow 已加入本輪 user 訊息，因此排除最後一則，只取前兩輪作為對話背景
+        history = self.conversation_messages[:-1][-4:]
+        conversation_context = "\n\n".join(
+            f"{message['role']}：{message['content']}" for message in history
+        ) or "（沒有先前對話。）"
+
+        # 每輪建立新的 Crew，避免上一輪的 Manager 與 Task 狀態影響後續委派
+        crew = build_crew(self.mcp_tools)
+
+        # 清除上一輪完成事件，讓本輪重新等待 Crew Completion 面板
+        ConsoleFormatter.crew_completion_printed.clear()
+
+        # 將本輪問題、今天日期與 Flow 保存的對話背景交給通用 Task
+        result = crew.kickoff(
+            inputs={
+                "query": self.state.current_user_message,
+                "today": date.today().isoformat(),
+                "conversation_context": conversation_context,
+            }
+        )
+
+        # 等待完成面板輸出，避免它插入下一輪輸入提示
+        ConsoleFormatter.crew_completion_printed.wait(timeout=10)
+        return str(result)
 
 
-def find_changed_export(before: dict[Path, tuple[int, int]]) -> Path | None:
-    """取得本輪新增或更新的 Markdown；沒有實際寫檔時回傳 None。"""
-    after = snapshot_markdown_exports()
-    changed = [path for path, state in after.items() if before.get(path) != state]
-    return max(changed, key=lambda path: after[path][0], default=None)
-
+# ── 啟動旅遊問答系統 ─────────────────────────────────
 
 def main() -> None:
+    """啟動 MCP 工具，並使用 Flow.chat() 進行多輪對話。"""
+    # MCP Server 只啟動一次，後續每輪 Crew 共用相同工具連線
     adapter, tools = start_mcp_tools()
-    history: list[str] = []
+
     try:
+        # 顯示系統名稱與三個可直接測試的示範問題
         print(
             """
 ==================================================
 個人化旅遊規劃 Agentic AI（CrewAI）已就緒
 範例問題：
    1. 幫我安排下週二三天兩夜的大阪古蹟參訪行程
-   2. 幫我把第二天改成以室內景點為主
-   3. 請把剛剛的行程匯出成 Markdown，檔名叫大阪三日遊
+   2. 幫我把行程調整成以室內景點為主
+   3. 請把剛剛的行程匯出成 Markdown
 ==================================================
 """
         )
 
-        turn = 1
-        while True:
-            try:
-                query = input(f"\n[第 {turn} 輪] 你：").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-
-            if query.lower() in {"exit", "quit", "離開", "結束"}:
-                break
-            if not query:
-                continue
-
-            today = date.today()
-            exports_before = snapshot_markdown_exports()
-            # 每輪建立全新的 Crew，避免 hierarchical Task 保留上一輪的
-            # manager/執行狀態，導致後續輪次無法委派給 worker Agent。
-            crew = build_crew(tools)
-            ConsoleFormatter.crew_completion_printed.clear()
-            result = crew.kickoff(
-                inputs={
-                    "query": query,
-                    "today": f"{today:%Y-%m-%d}（星期{WEEKDAYS[today.weekday()]}）",
-                    "conversation_context": "\n\n".join(
-                        history[-MAX_HISTORY_MESSAGES:]
-                    )
-                    or "（第一輪對話，沒有先前內容。）",
-                }
-            )
-
-            # CrewAI 的 verbose 完成面板可能比 kickoff() 稍晚輸出；先等面板完成，
-            # 才印本輪回答並進入下一次 input()，避免面板插進使用者提示。
-            ConsoleFormatter.crew_completion_printed.wait(
-                timeout=CREW_COMPLETION_TIMEOUT_SECONDS
-            )
-
-            exported_file = find_changed_export(exports_before)
-            if exported_file is not None:
-                # 寫檔結果以實際檔案為準，匯出輪不再把 Markdown 全文印到終端。
-                answer = exported_file.relative_to(EXPORTS_DIR.parent).as_posix()
-            else:
-                answer = str(result)
-            print(f"\n旅遊助理：{answer}")
-            history.extend([f"user：{query}", f"assistant：{answer}"])
-            print("\n✅ 本輪規劃完成，可以繼續提問。")
-            turn += 1
-
+        # Flow.chat() 負責輸入迴圈、對話歷史、空白輸入與離開指令
+        TravelFlow(
+            mcp_tools=tools,
+            suppress_flow_events=True,
+            tracing=False,
+        ).chat(
+            prompt="\n你：",
+            assistant_prefix="\n旅遊助理：",
+            exit_commands=("exit", "quit", "離開", "結束"),
+        )
         print("\n👋 再見")
     finally:
-        # npx 起的是本機子程序，不關掉會留在背景
+        # 關閉 npx 啟動的 MCP 子程序，避免離開主程式後繼續留在背景
         adapter.stop()
 
 

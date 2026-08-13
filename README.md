@@ -21,7 +21,7 @@ pip install -r requirements.txt
 2. 把旅遊紀錄 `.txt` 放進 `knowledge/`（目錄下所有 `.txt` 都會被讀入）。
 
 所有 Agent 共用 `CHAT_MODEL`，目前透過本機 CLI Proxy API 使用
-`gpt-5.4-mini`。聊天模型的端點與金鑰分別設定在 `CLI_PROXY_BASE_URL` 和
+`gpt-5.5`。聊天模型的端點與金鑰分別設定在 `CLI_PROXY_BASE_URL` 和
 `CLI_PROXY_API_KEY`；RAG 的 embedding 仍透過 NVIDIA 使用專用的
 `nv-embed-v1`。
 
@@ -30,12 +30,12 @@ pip install -r requirements.txt
 ```powershell
 python main.py
 # 範例輸入：我下週二想去大阪三天兩夜
-# 可以繼續輸入：第二天改輕鬆一點
+# 可以繼續輸入：幫我把行程調整得輕鬆一點
 # Skill 示範：請把剛剛的行程匯出成 Markdown，檔名叫大阪三日遊
 # 輸入 exit、quit、離開或結束可關閉
 ```
 
-結果會直接顯示在終端機，並保留同一次執行期間的近期對話背景。**必須在專案目錄下執行**，`knowledge/` 是相對路徑。
+結果會直接顯示在終端機，並保留同一次執行期間的近期對話背景。
 
 ## 檔案結構
 
@@ -43,11 +43,10 @@ python main.py
 AIAgentCrewAI/
 ├── .env                 金鑰與模型名稱
 ├── requirements.txt
-├── main.py              入口：啟動工具 → while 多輪輸入與歷史 → 關閉工具
+├── main.py              入口：啟動工具 → Conversational Flow 多輪對話 → 關閉工具
 ├── crew.py              定義通用 task 並組裝 hierarchical Crew
 ├── agents.py            一位 manager 與三位 worker、LLM、知識庫、embedder
-├── tools.py             MCP server 設定 + crewAI 參數驗證的修補
-├── test_tool_args.py    tools.py 那段修補的行為測試（17 個 case）
+├── tools.py             MCP server 設定 + 原始工具載入
 ├── skills/              itinerary-markdown-exporter Skill
 ├── exports/             Skill 產生的 Markdown 行程
 └── knowledge/           旅遊紀錄 .txt
@@ -58,10 +57,10 @@ AIAgentCrewAI/
 ## 執行流程
 
 ```
-main.py  啟動 MCP；用 while + list 保存對話
+main.py  啟動 MCP；由 Conversational Flow 保存對話
    │
    ▼
-crew.py  啟動時建立 Crew（manager + 3 worker + 1 個通用 task），每輪重用
+crew.py  每輪建立新 Crew（manager + 3 worker + 1 個通用 task），避免殘留執行狀態
    │
    ▼
 旅遊規劃經理  分析問題，只委派必要的專員並整合結果
@@ -71,7 +70,7 @@ crew.py  啟動時建立 Crew（manager + 3 worker + 1 個通用 task），每�
    └─ 需要完整行程 ─→ 行程規劃師（整合前兩位專員的結果）
    │
    ▼
-main.py  把回答加入 history 並等待下一輪；MCP 不會重新啟動
+main.py  由 Flow 保存回答並等待下一輪；MCP 不會重新啟動
 ```
 
 Python 迴圈只管理連續對話，不預先固定 Agent 工作流程。每一輪真正需要呼叫哪些專員，
@@ -92,20 +91,19 @@ Python 迴圈只管理連續對話，不預先固定 Agent 工作流程。每一
 | 旅遊情報研究員 | 無 |
 | 個人化行程規劃師 | `itinerary-markdown-exporter` |
 
-Skill 規定檔名、Markdown 格式、不得重新搜尋及不得覆寫等工作流程；實際寫檔由
-`FileWriterTool` 執行，且只能寫入 `exports/`。旅遊紀錄仍是 `knowledge`，Tavily、
-天氣與匯率仍是 `tools`。平常的專員交接與終端回答都使用純文字，只有寫入
-`exports/*.md` 的檔案內容使用 Markdown。終端機只在 Skill 真正載入時顯示：
+Skill 規定觸發條件、檔名、Markdown 格式與不得重新搜尋等工作流程；實際寫檔由
+`FileWriterTool` 執行，且只能寫入 `exports/`。旅遊紀錄仍是
+`knowledge`，Tavily、天氣與匯率仍是即時資訊工具。終端機只在 Skill 真正載入時顯示：
 
 ```text
-── 套用 Skill：旅遊行程 Markdown 匯出（itinerary-markdown-exporter）
+── 套用 Skill：itinerary-markdown-exporter
    執行 Agent：個人化行程規劃師
 ```
 
 建議依序示範三輪：
 
 1. `幫我安排下週二三天兩夜的大阪古蹟參訪行程`
-2. `幫我把第二天改成以室內景點為主`
+2. `幫我把行程調整成以室內景點為主`
 3. `請把剛剛的行程匯出成 Markdown，檔名叫大阪三日遊`
 
 前兩輪不使用 Skill；第三輪才載入 Skill 並產生 `exports/大阪三日遊.md`。
@@ -119,24 +117,18 @@ Skill 規定檔名、Markdown 格式、不得重新搜尋及不得覆寫等工�
 | frankfurter | `https://mcp.frankfurter.dev/`（streamable-http，免金鑰） | `get_rates` |
 
 兩個是本機 stdio 子程序、一個是遠端 HTTP endpoint，同一個 list 混著放。
-每個 server 都只取用必要工具，共 3 個。weather-mcp 另外用 `ENABLED_TOOLS=forecast`
-在 server 端只註冊預報工具，並以 `WEATHER_UNITS=metric` 固定公制。Agent 查一般天氣時
-使用每日、summary 輸出，避免原本 `weather_forecast` 的巨大 schema 與 15 分鐘時間序列。
+載入時只從 server 選出本 Lab 需要的 3 個工具，不修改工具參數或回傳值。
 
-## 已知問題與修補
+## 直接使用 MCP 工具
 
-`tools.py` 頂端有一段對 crewAI `BaseTool._validate_kwargs` 的修補。原因是
-LLM 不會「省略」選填欄位，只會每格填佔位值，而 crewAI 的驗證層又會把沒填的
-欄位補成 `None` 送給 MCP server：
+`tools.py` 透過 CrewAI 的 `MCPServerAdapter` 載入工具，再把原始 MCP 工具直接交給 Agent：
 
-| 症狀 | 處理 |
-|---|---|
-| 陣列被寫成字串 `'["TWD"]'` | 驗證前先 `json.loads` 還原 |
-| 選填欄位填佔位值 `days=0` | 驗證失敗時丟掉該欄位再驗一次 |
-| 模型發明 schema 沒有的欄位 | 一併丟掉 |
-| 沒填的欄位被補成 `None` 送出 | 輸出前剝掉 |
+```text
+MCP Server → MCPServerAdapter → 原始 MCP Tools → CrewAI Agent
+```
 
-必填欄位錯了照樣拋錯。行為由 `test_tool_args.py` 的 17 個 case 涵蓋。
+程式不再固定 Tavily 的搜尋深度與結果數、不再固定天氣格式，也不再轉換匯率參數；
+Agent 依照 MCP 原始 schema 決定呼叫參數。`adapter.stop()` 仍負責關閉 stdio 子程序。
 
 ## 延伸練習
 
