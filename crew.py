@@ -1,52 +1,59 @@
-"""crew.py — 組裝 hierarchical Crew。
+"""建立由 Manager 動態委派工作的 Hierarchical Crew。"""
 
-- process=Process.hierarchical：啟用 manager 動態指派（預設是 sequential）。
-- manager_agent=manager：使用自訂 manager；agents 只放五個 worker。
-  （若把 manager 也放進 agents，會踩到「只有 manager 進 self.agents、
-   找不到 coworker 只好自己做完」的問題。）
-- memory：跨輪對話記憶。不能用 embedder dict 走 openai 相容協定指向 NVIDIA —
-  crewai 底層是 chromadb 的 OpenAI client，傳不了 NVIDIA asymmetric embedding
-  模型必需的 input_type 參數（會 400）。改傳 Memory 實例：embedder 用專案既有的
-  NVIDIAEmbeddings 包成 callable，llm 也指向 NVIDIA（Memory 預設 gpt-5.4-mini
-  會要求 OPENAI_API_KEY）。
-"""
+# ── 載入套件與 Agent 建立函數 ───────────────────────
 
-import os
-import shutil
+from crewai import Crew, Process, Task
 
-from crewai import Crew, Process
-from crewai.memory.unified_memory import Memory
-from crewai_core.paths import db_storage_path
-from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+from agents import build_agents, build_llm
 
+# ── Task 行為規格 ────────────────────────────────────
 
-def _build_memory(llm) -> Memory:
-    # 記憶只保留單次啟動：啟動時清掉上次的存檔（順帶免疫換 EMBEDDING_MODEL 的維度衝突）
-    shutil.rmtree(os.path.join(db_storage_path(), "memory"), ignore_errors=True)
+# 通用 Task 接收本輪問題與對話背景，實際工作流程由 Manager 動態決定
 
-    nv = NVIDIAEmbeddings(
-        model=os.environ["EMBEDDING_MODEL"],
-        api_key=os.environ["NVIDIA_API_KEY"],
-        base_url=os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        truncate="END",  # 模型上限 512 tokens，超長記憶內容由伺服器端截斷而非 400
-    )
-    # ponytail: 存取都用 passage 向量（embed_documents），asymmetric 模型的
-    # query/passage 區分先不做，檢索品質有感再說
-    return Memory(
-        embedder=lambda texts: nv.embed_documents(list(texts)),
-        llm=llm,
-    )
+USER_REQUEST_DESCRIPTION = (
+    "今天是 {today}。使用者本輪的旅遊問題是：{query}\n\n"
+    "先前對話背景如下：\n{conversation_context}\n\n"
+    "本輪問題優先於先前內容；若本輪指涉先前內容，應依對話背景理解，"
+    "最新修正覆蓋舊要求，也不要再次推薦已被否決的選項。"
+    "依經理的動態委派與審查規則完成本輪需求，最後直接回答原始問題。"
+    "不要輸出內部委派、審查或重試過程。全文使用繁體中文與純文字；"
+    "只有使用者要求匯出 PDF 時，交給 PDF 轉換工具的內容可以使用 Markdown。"
+)
 
+USER_REQUEST_EXPECTED_OUTPUT = (
+    "一份只回答本輪問題、同時正確承接先前對話的繁體中文答案。"
+    "所有可能變動的資訊都附有實際查詢來源；查不到的資訊明確標示需確認，"
+    "不得臆測。若問題要求完整行程，答案應包含每日安排、交通、預算與注意事項。"
+    "終端回答使用純文字格式。PDF 匯出成功時，只輸出 exports/ 開頭的 .pdf 相對路徑。"
+)
 
-def build_crew(manager, workers, task, llm) -> Crew:
+# ── 組裝 Hierarchical Crew ──────────────────────────
+
+def build_crew(tools: list) -> Crew:
+    """建立本輪要執行的 Hierarchical Crew。"""
+    # 每輪建立新的共用 LLM、一位 Manager 與三位 Worker
+    manager, workers = build_agents(build_llm(), tools)
+
+    # 將通用 Task、Manager 與 Worker 組成 Hierarchical Crew
     return Crew(
-        agents=workers,           # 只放 worker，manager 不放進來
-        tasks=[task],
+        # agents 只放入可被委派的 Worker，Manager 由 manager_agent 指定
+        agents=workers,
+        # 每輪只有一張通用入口 Task，實際子工作由 Manager 現場判斷
+        tasks=[
+            Task(
+                # description 會在 kickoff 時帶入日期、問題與先前對話
+                description=USER_REQUEST_DESCRIPTION,
+                # expected_output 定義最終答案必須符合的品質與格式
+                expected_output=USER_REQUEST_EXPECTED_OUTPUT,
+                # 不指定專責 Agent，由 Manager 依本輪問題動態選擇 Worker
+            )
+        ],
+        # 使用 Hierarchical Process，讓 Manager 負責動態委派與整合
         process=Process.hierarchical,
-        manager_agent=manager,    # 自訂 manager
-        memory=_build_memory(llm),
-        skills=["skills/common"],  # 全員共用的 skills；角色專屬的在 agents.py 各自掛載
-        max_rpm=20,  # 全 crew 共用的節流：超過每分鐘 20 次 LLM 呼叫就等待，避開 NVIDIA 免費額度 429
-        output_log_file="output/執行過程.json",  # 完整過程：每個 agent 的任務與產出（.json 結尾存結構化格式）
+        # 指定本輪負責管理三位 Worker 的 Manager Agent
+        manager_agent=manager,
+        # 在終端機顯示 Crew、Agent 與工具的完整執行過程
         verbose=True,
+        # 保留 Agent 與工具執行畫面，只關閉可能插入下一輪輸入提示的背景 Trace
+        tracing=False,
     )

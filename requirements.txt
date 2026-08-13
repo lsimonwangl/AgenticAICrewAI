@@ -1,18 +1,3 @@
-# CrewAI 與工具（含 MCP extra）
-crewai
-crewai-tools[mcp]
-litellm  # crewai 1.x 對非原生 provider（如 NVIDIA NIM 的 openai/ 前綴）需要 litellm fallback
-
-# MCP 客戶端
-mcp
-
-# 沿用 Lab 4 生態的 RAG 套件
-langchain-milvus>=0.2
-pymilvus>=2.5,<2.6
-langchain-nvidia-ai-endpoints
-langchain-community
-langchain-text-splitters
-
+crewai==1.15.14
+crewai-tools[mcp]==1.15.14
 python-dotenv
-
-# 首次成功執行後，建議 pip freeze 鎖定 crewai / crewai-tools 的實際版本

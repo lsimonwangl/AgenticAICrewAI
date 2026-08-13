@@ -1,60 +1,53 @@
-"""tools.py — MCP 外部工具。
+"""啟動旅遊規劃所需的 MCP Server 並載入原始工具。"""
 
-以 crewai-tools 的 MCPServerAdapter 分別啟動三個 MCP server（tavily / open-meteo /
-frankfurter），每個 adapter 的 .tools 對應該 server 的工具清單，之後依 server 切給
-對應 agent（角色化取用）。adapter 需在程式結束時 .stop()，由 main.py 的 finally 負責。
-
-沿用 Lab 4 設定：tavily / open-meteo 走 npx stdio；frankfurter 走遠端 streamable-http。
-MCPServerAdapter 同時接受 StdioServerParameters 與 {"url", "transport"} dict。
-"""
+# ── 載入套件 ────────────────────────────────────────
 
 import os
-from typing import Any
 
-from mcp import StdioServerParameters
 from crewai_tools import MCPServerAdapter
+from mcp import StdioServerParameters
 
 
-def _tavily_params() -> StdioServerParameters:
-    return StdioServerParameters(
-        command="npx",
-        args=["-y", "tavily-mcp@latest"],     # Lab 4：tavily 官方 stdio server
-        env={**os.environ, "TAVILY_API_KEY": os.environ["TAVILY_API_KEY"]},
+# ── 啟動 MCP Server ──────────────────────────────────
+
+def start_mcp_tools() -> tuple[MCPServerAdapter, list]:
+    """啟動 MCP Server，回傳生命週期 Adapter 與三個原始工具。"""
+    # MCPServerAdapter 統一管理兩個本機 Stdio Server 與一個遠端 HTTP Server
+    adapter = MCPServerAdapter(
+        [
+            # Tavily MCP：搜尋景點、住宿與交通等即時旅遊資訊
+            StdioServerParameters(
+                # 使用 npx 下載並啟動 Tavily MCP Server
+                command="npx",
+                args=["-y", "tavily-mcp@latest"],
+                # 將 .env 中的 Tavily API Key 傳入 MCP 子程序
+                env={"TAVILY_API_KEY": os.getenv("TAVILY_API_KEY", "")},
+            ),
+            # Weather MCP：查詢全球天氣預報
+            StdioServerParameters(
+                # Weather MCP 不需要 API Key，直接透過 npx 啟動
+                command="npx",
+                args=["-y", "@dangahagan/weather-mcp@latest"],
+            ),
+            # Frankfurter MCP：透過遠端 Server 查詢匯率
+            {
+                # 使用官方託管的 MCP Server，不需要啟動本機子程序
+                "url": "https://mcp.frankfurter.dev/",
+                "transport": "streamable-http",
+            },
+        ],
+        # 只載入本 Lab 需要的 Tavily 搜尋工具
+        "tavily_search",
+        # 只載入 Weather MCP 的天氣預報工具
+        "get_forecast",
+        # 只載入 Frankfurter MCP 的匯率查詢工具
+        "get_rates",
     )
+    # 將 Adapter 載入的工具轉為 list，供 CrewAI Agent 直接使用
+    tools = list(adapter.tools)
 
+    # 顯示實際載入的工具數量與名稱，方便確認 MCP 是否成功啟動
+    print(f"已載入 {len(tools)} 個 MCP 工具：{[t.name for t in tools]}")
 
-def _open_meteo_params() -> StdioServerParameters:
-    return StdioServerParameters(
-        command="npx",
-        args=["-y", "open-meteo-mcp-server"],  # Lab 4：免金鑰天氣 stdio server
-        env={**os.environ},
-    )
-
-
-def _frankfurter_params() -> dict[str, Any]:
-    # Lab 4：frankfurter 是遠端 HTTP MCP server，非 npx stdio。
-    # crewai/mcpadapt 只認 "streamable-http"（不是 "http"），端點以 POST / 回 JSON-RPC。
-    return {
-        "url": "https://mcp.frankfurter.dev/",
-        "transport": "streamable-http",
-    }
-
-
-def start_mcp_adapters():
-    """啟動三個 MCP server。
-
-    回傳 (adapters, bundles)：
-      adapters — 供程式結束時逐一 .stop()
-      bundles  — {"tavily": [...], "open_meteo": [...], "frankfurter": [...]}，
-                 依 server 切分的工具清單，分別交給對應 agent
-    """
-    tavily = MCPServerAdapter(_tavily_params())
-    open_meteo = MCPServerAdapter(_open_meteo_params())
-    frankfurter = MCPServerAdapter(_frankfurter_params())
-
-    bundles = {
-        "tavily": tavily.tools,
-        "open_meteo": open_meteo.tools,
-        "frankfurter": frankfurter.tools,
-    }
-    return [tavily, open_meteo, frankfurter], bundles
+    # Adapter 交由 main.py 管理生命週期，工具清單則提供給 Crew 與 Agent 使用
+    return adapter, tools
