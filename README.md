@@ -5,7 +5,7 @@
 ## 環境需求
 
 - **Python 3.12**（crewai 需要 `>=3.10,<3.14`，不能用 Lab4 的 3.14）
-- Node.js 18+（tavily 與 weather-mcp 走 `npx` 啟動；frankfurter 是遠端 server）
+- Node.js 20+（tavily 與 weather-mcp 走 `npx` 啟動；frankfurter 是遠端 server）
 
 ## 安裝
 
@@ -112,8 +112,8 @@ Skill 規定觸發條件、檔名、Markdown 格式與不得重新搜尋等工�
 
 | server | 啟動方式 | 取用的工具 |
 |---|---|---|
-| tavily | `npx -y tavily-mcp@latest`（stdio，需 `TAVILY_API_KEY`） | `tavily_search` |
-| weather-mcp | `npx -y @dangahagan/weather-mcp@latest`（stdio，免金鑰） | `get_forecast` |
+| tavily | `npx -y tavily-mcp@0.2.21`（stdio，需 `TAVILY_API_KEY`） | `tavily_search` |
+| weather-mcp | `npx -y @dangahagan/weather-mcp@1.13.0`（stdio，免金鑰） | `get_forecast` |
 | frankfurter | `https://mcp.frankfurter.dev/`（streamable-http，免金鑰） | `get_rates` |
 
 兩個是本機 stdio 子程序、一個是遠端 HTTP endpoint，同一個 list 混著放。

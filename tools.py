@@ -17,17 +17,17 @@ def start_mcp_tools() -> tuple[MCPServerAdapter, list]:
         [
             # Tavily MCP：搜尋景點、住宿與交通等即時旅遊資訊
             StdioServerParameters(
-                # 使用 npx 下載並啟動 Tavily MCP Server
+                # 固定 Tavily MCP 版本，避免套件更新後行為或 schema 改變
                 command="npx",
-                args=["-y", "tavily-mcp@latest"],
+                args=["-y", "tavily-mcp@0.2.21"],
                 # 將 .env 中的 Tavily API Key 傳入 MCP 子程序
                 env={"TAVILY_API_KEY": os.getenv("TAVILY_API_KEY", "")},
             ),
             # Weather MCP：查詢全球天氣預報
             StdioServerParameters(
-                # Weather MCP 不需要 API Key，直接透過 npx 啟動
+                # 固定 Weather MCP 版本，避免工具清單與 schema 自動改變
                 command="npx",
-                args=["-y", "@dangahagan/weather-mcp@latest"],
+                args=["-y", "@dangahagan/weather-mcp@1.13.0"],
             ),
             # Frankfurter MCP：透過遠端 Server 查詢匯率
             {
@@ -42,6 +42,8 @@ def start_mcp_tools() -> tuple[MCPServerAdapter, list]:
         "get_forecast",
         # 只載入 Frankfurter MCP 的匯率查詢工具
         "get_rates",
+        # 第一次下載固定版本可能超過預設 30 秒，只延長 MCP 啟動等待時間
+        connect_timeout=120,
     )
     # 將 Adapter 載入的工具轉為 list，供 CrewAI Agent 直接使用
     tools = list(adapter.tools)
