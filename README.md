@@ -1,6 +1,6 @@
 # Lab5：Multi-Agent AI Agent — crewAI 框架
 
-可連續對話的通用旅遊助理。一位 manager 依每輪問題與先前對話，動態協調偏好分析師、情報研究員與行程規劃師。
+可連續對話的通用旅遊助理。一位 manager 依每輪問題與先前對話，動態協調旅遊偏好分析 Agent、旅遊情報研究 Agent 與個人化行程規劃 Agent。
 
 ## 環境需求
 
@@ -63,17 +63,17 @@ main.py  啟動 MCP；由 Conversational Flow 保存對話
 crew.py  每輪建立新 Crew（manager + 3 worker + 1 個通用 task），避免殘留執行狀態
    │
    ▼
-旅遊規劃經理  分析問題，只委派必要的專員並整合結果
+Manager Agent 分析問題，只委派必要的 Agent 並整合結果
    │
-   ├─ 需要個人偏好 ─→ 偏好分析師（讀 knowledge/）
-   ├─ 需要即時情報 ─→ 情報研究員（用 MCP 工具）
-   └─ 需要完整行程 ─→ 行程規劃師（整合前兩位專員的結果）
+   ├─ 需要個人偏好 ─→ 旅遊偏好分析 Agent（讀 knowledge/）
+   ├─ 需要即時情報 ─→ 旅遊情報研究 Agent（用 MCP 工具）
+   └─ 需要完整行程 ─→ 個人化行程規劃 Agent（整合前兩個 Agent 的結果）
    │
    ▼
 main.py  由 Flow 保存回答並等待下一輪；MCP 不會重新啟動
 ```
 
-Python 迴圈只管理連續對話，不預先固定 Agent 工作流程。每一輪真正需要呼叫哪些專員，
+Python 迴圈只管理連續對話，不預先固定 Agent 工作流程。每一輪真正需要呼叫哪些 Agent，
 仍由 hierarchical manager 現場判斷。這個版本會把最近兩輪對話交給 Crew，
 避免 prompt 隨對話無限增長；關閉程式後不會跨程序保存 session。每位 Agent 都有
 迭代上限，避免同一題反覆搜尋而拖慢回應；MCP 工具保留 CrewAI 原生平行執行。
@@ -81,15 +81,15 @@ Python 迴圈只管理連續對話，不預先固定 Agent 工作流程。每一
 ## Agent Skills
 
 課堂展示版只保留一個 `itinerary-markdown-exporter`。一般問答與行程規劃不會載入；
-只有使用者明確要求把先前完成的行程儲存、匯出或整理成 Markdown 時，個人化行程
-規劃師才會透過 CrewAI 的 `load_skill` 讀取完整 SOP。
+只有使用者明確要求把先前完成的行程儲存、匯出或整理成 Markdown 時，
+個人化行程規劃 Agent 才會透過 CrewAI 的 `load_skill` 讀取完整 SOP。
 
 | Agent | 可按需載入的 Skill |
 |---|---|
-| 旅遊規劃經理 | 無 |
-| 旅遊偏好分析師 | 無 |
-| 旅遊情報研究員 | 無 |
-| 個人化行程規劃師 | `itinerary-markdown-exporter` |
+| Manager Agent | 無 |
+| 旅遊偏好分析 Agent | 無 |
+| 旅遊情報研究 Agent | 無 |
+| 個人化行程規劃 Agent | `itinerary-markdown-exporter` |
 
 Skill 規定觸發條件、檔名、Markdown 格式與不得重新搜尋等工作流程；實際寫檔由
 `FileWriterTool` 執行，且只能寫入 `exports/`。旅遊紀錄仍是
@@ -97,7 +97,7 @@ Skill 規定觸發條件、檔名、Markdown 格式與不得重新搜尋等工�
 
 ```text
 ── 套用 Skill：itinerary-markdown-exporter
-   執行 Agent：個人化行程規劃師
+   執行 Agent：個人化行程規劃 Agent
 ```
 
 建議依序示範三輪：
