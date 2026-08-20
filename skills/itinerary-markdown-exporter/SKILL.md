@@ -1,10 +1,6 @@
 ---
 name: itinerary-markdown-exporter
 description: 使用者明確要求把先前已完成的旅遊行程儲存、匯出或整理成 Markdown 文件時使用。一般旅遊問答、第一次規劃行程或只修改行程時不要使用。
-compatibility: crewai>=1.15.0
-metadata:
-  author: AgenticAICrewAI
-  version: "1.0"
 ---
 
 # 旅遊行程 Markdown 匯出
