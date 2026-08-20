@@ -38,23 +38,21 @@ TRAVEL_RECORDS = TextFileKnowledgeSource(
 
 # ── 建立所有 Agent 共用的 LLM ──────────────────────────────
 def build_llm() -> LLM:
-    """建立所有 Agent 共用的 CLI Proxy API 模型。"""
-    # 從 .env 取得 CLI Proxy API 位址，讓 base_url 與 api_base 使用相同設定
-    base = os.getenv("CLI_PROXY_BASE_URL")
+    """建立所有 Agent 共用的 NVIDIA NIM 模型。"""
+    # 從 .env 取得 NVIDIA NIM 位址，讓 base_url 與 api_base 使用相同設定
+    base = os.getenv("NVIDIA_BASE_URL")
 
-    # 使用 OpenAI 相容介面建立 CrewAI LLM，後續四位 Agent 共用這組模型設定
+    # NVIDIA NIM 提供 OpenAI 相容介面，後續四位 Agent 共用這組模型設定
     return LLM(
-        # CHAT_MODEL 只保存模型名稱，前方補上 openai/ 讓 CrewAI 使用相容介面
-        model=f"openai/{os.getenv('CHAT_MODEL')}",
-        # CLI Proxy API 的服務位址
+        # LLM_MODEL 保存 NVIDIA 模型名稱，前方補上 openai/ 讓 CrewAI 使用相容介面
+        model=f"openai/{os.getenv('LLM_MODEL')}",
+        # NVIDIA NIM 的服務位址
         base_url=base,
         api_base=base,
-        # CLI Proxy API 的驗證金鑰
-        api_key=os.getenv("CLI_PROXY_API_KEY"),
-        # 使用較低推理強度，縮短每次 Agent 判斷與回答所需時間
-        reasoning_effort="low",
-        # 單次模型請求最多等待 60 秒
-        timeout=60,
+        # NVIDIA NIM 的驗證金鑰
+        api_key=os.getenv("NVIDIA_NIM_API_KEY"),
+        # 單次模型請求最多等待 500 秒
+        timeout=500,
         # 啟用串流，讓 CrewAI 可以逐步接收模型輸出
         stream=True,
     )
@@ -70,7 +68,7 @@ def build_embedder() -> dict:
         "config": {
             # 從環境變數取得 Embedding Model 名稱、API Key 與服務位址
             "model_name": os.getenv("EMBEDDING_MODEL"),
-            "api_key": os.getenv("NVIDIA_API_KEY"),
+            "api_key": os.getenv("NVIDIA_NIM_API_KEY"),
             "api_base": os.getenv("NVIDIA_BASE_URL"),
         },
     }
