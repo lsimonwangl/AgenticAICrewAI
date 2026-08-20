@@ -15,8 +15,6 @@ from datetime import date
 from dotenv import load_dotenv
 
 from crewai import Flow
-from crewai.events.event_bus import crewai_event_bus
-from crewai.events.types.skill_events import SkillUsedEvent
 from crewai.events.utils.console_formatter import ConsoleFormatter
 from crewai.experimental.conversational import ConversationState
 from crewai.flow import listen
@@ -26,19 +24,6 @@ from tools import start_mcp_tools
 
 # 讀取 .env，載入模型、MCP 與 Knowledge 連線需要的環境變數
 load_dotenv()
-
-
-# ── 顯示本輪實際套用的 Skill ─────────────────────────────
-
-# 監聽 CrewAI 的 SkillUsedEvent；只有 Skill 真正被 Agent 載入時才會觸發
-@crewai_event_bus.on(SkillUsedEvent)
-def show_skill_usage(_, event: SkillUsedEvent) -> None:
-    """在終端機顯示本輪實際套用的 Skill 與執行 Agent。"""
-    # 顯示 CrewAI 實際載入的 Skill 名稱
-    print(f"\n── 套用 Skill：{event.skill_name}")
-
-    # 顯示套用 Skill 的 Agent；事件未提供角色時顯示「未知 Agent」
-    print(f"   執行 Agent：{event.agent_role or '未知 Agent'}")
 
 
 # ── 建立保存近期對話的 Conversational Flow ─────────────────
