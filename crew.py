@@ -1,4 +1,12 @@
-"""建立由 Manager 動態委派工作的 Hierarchical Crew。"""
+"""
+CrewAI 個人化旅遊規劃 - Task 與 Crew 組裝
+=================================
+crew.py 負責建立每輪對話使用的通用 Task，並將一位 Manager Agent
+與三位 Worker Agent 組成 Hierarchical Crew。
+
+這個檔案不預先固定 Agent 的執行順序；使用者問題送入 Crew 後，
+由 Manager Agent 判斷需要委派哪些 Worker Agent，再審查並整合結果。
+"""
 
 # ── 載入套件與 Agent 建立函數 ───────────────────────
 
@@ -20,6 +28,7 @@ USER_REQUEST_DESCRIPTION = (
     "只有使用者要求匯出 PDF 時，交給 PDF 轉換工具的內容可以使用 Markdown。"
 )
 
+# expected_output 定義 Crew 最終交付內容必須具備的品質與格式
 USER_REQUEST_EXPECTED_OUTPUT = (
     "一份只回答本輪問題、同時正確承接先前對話的繁體中文答案。"
     "所有可能變動的資訊都附有實際查詢來源；查不到的資訊明確標示需確認，"
@@ -31,10 +40,10 @@ USER_REQUEST_EXPECTED_OUTPUT = (
 
 def build_crew(tools: list) -> Crew:
     """建立本輪要執行的 Hierarchical Crew。"""
-    # 每輪建立新的共用 LLM、一位 Manager 與三位 Worker
+    # 先建立共用 LLM，再建立一位 Manager Agent 與三位 Worker Agent
     manager, workers = build_agents(build_llm(), tools)
 
-    # 將通用 Task、Manager 與 Worker 組成 Hierarchical Crew
+    # 建立 Crew，將通用 Task、Manager 與 Worker 組成層級式多 Agent 團隊
     return Crew(
         # agents 只放入可被委派的 Worker，Manager 由 manager_agent 指定
         agents=workers,
