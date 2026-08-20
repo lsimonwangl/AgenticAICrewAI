@@ -1,4 +1,15 @@
-"""建立旅遊規劃 Manager、Worker Agent 與共用模型設定。"""
+"""
+CrewAI 個人化旅遊規劃 - Agent 與模型設定
+=================================
+agents.py 負責建立一位 Manager Agent 與三位 Worker Agent，
+並設定所有 Agent 共用的 LLM、Knowledge Embedding Model、MCP 工具與 Skill。
+
+Agent 分工：
+  - Manager Agent：判斷需求、動態委派工作並審查結果
+  - 旅遊偏好分析 Agent：從 Knowledge 擷取使用者旅遊偏好
+  - 旅遊情報研究 Agent：透過 MCP 工具查詢即時旅遊資訊
+  - 個人化行程規劃 Agent：整合結果，並在需要時套用 Skill 匯出行程
+"""
 
 # ── 載入套件 ────────────────────────────────────────
 
@@ -10,26 +21,28 @@ from crewai.knowledge.source.text_file_knowledge_source import TextFileKnowledge
 from crewai.skills import discover_skills
 from crewai_tools import FileWriterTool
 
-# ── 專案路徑、知識庫與 Skill ─────────────────────────
+# ── 專案路徑、Knowledge 與 Skill ─────────────────────────
 
 # 取得專案根目錄，供知識庫、Skill 與匯出工具共用
 PROJECT_DIR = Path(__file__).resolve().parent
 
-# 掃描 skills/ 並載入行程 Markdown 匯出 Skill
+# 掃描專案的 skills/ 資料夾，取得行程 Markdown 匯出 Skill
 MARKDOWN_EXPORT_SKILL = discover_skills(PROJECT_DIR / "skills")[0]
 
-# 將 knowledge/ 中的旅遊紀錄建立為旅遊偏好分析 Agent 可查詢的知識來源
+# 讀取 knowledge/ 中的所有 .txt 旅遊紀錄，建立 Agent 可查詢的 Knowledge Source
 TRAVEL_RECORDS = TextFileKnowledgeSource(
+    # sorted() 固定檔案載入順序，避免作業系統回傳順序不同
     file_paths=sorted((PROJECT_DIR / "knowledge").glob("*.txt"))
 )
 
 
+# ── 建立所有 Agent 共用的 LLM ──────────────────────────────
 def build_llm() -> LLM:
     """建立所有 Agent 共用的 CLI Proxy API 模型。"""
-    # 從環境變數取得 CLI Proxy API 位址，讓 base_url 與 api_base 共用同一設定
+    # 從 .env 取得 CLI Proxy API 位址，讓 base_url 與 api_base 使用相同設定
     base = os.getenv("CLI_PROXY_BASE_URL")
 
-    # 使用 OpenAI 相容介面建立 CrewAI LLM，所有 Agent 共用這組模型設定
+    # 使用 OpenAI 相容介面建立 CrewAI LLM，後續四位 Agent 共用這組模型設定
     return LLM(
         # CHAT_MODEL 只保存模型名稱，前方補上 openai/ 讓 CrewAI 使用相容介面
         model=f"openai/{os.getenv('CHAT_MODEL')}",
@@ -47,10 +60,12 @@ def build_llm() -> LLM:
     )
 
 
+# ── 建立 Knowledge 使用的 Embedding Model ────────────────────
 def build_embedder() -> dict:
     """建立知識庫使用的 NVIDIA NIM Embedding 設定。"""
-    # NVIDIA NIM 提供 OpenAI 相容介面，因此 provider 使用 openai
+    # NVIDIA NIM 提供 OpenAI 相容介面，因此 provider 指定為 openai
     return {
+        # CrewAI 依 provider 選擇 Embedding 呼叫方式
         "provider": "openai",
         "config": {
             # 從環境變數取得 Embedding Model 名稱、API Key 與服務位址
@@ -61,9 +76,9 @@ def build_embedder() -> dict:
     }
 
 
-# ── Agent 行為規格 ───────────────────────────────────
+# ── 定義四位 Agent 的目標與行為規格 ────────────────────────
 
-# 以下 goal 與 backstory 會直接送入模型，用來規範各 Agent 的職責與行為
+# 以下 goal 與 backstory 會直接送入 LLM，用來規範各 Agent 的職責、資料邊界與輸出方式
 
 # 旅遊偏好分析 Agent 的目標：從過往紀錄萃取與本輪需求直接相關的偏好
 PREFERENCE_ANALYST_GOAL = (
@@ -227,11 +242,11 @@ MANAGER_BACKSTORY = """你是經驗豐富的旅遊專案Manager Agent。你會�
 一般最終回答使用純文字與換行，不使用 Markdown 標題、表格、粗體或項目符號；
 只有準備交給寫檔工具的文件內容可以使用 Markdown。"""
 
-# ── 建立 Manager 與 Worker Agents ───────────────────
+# ── 建立一位 Manager Agent 與三位 Worker Agent ───────────────
 
 def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
     """建立一位 Manager 與三位 Worker Agent。"""
-    # 旅遊偏好分析 Agent 只存取旅遊紀錄知識庫，不持有外部工具
+    # 建立旅遊偏好分析 Agent；這位 Agent 只存取旅遊紀錄 Knowledge，不持有外部工具
     preference_analyst = Agent(
         # role 是 Manager 委派時使用的角色名稱，必須與 Manager 提示詞一致
         role="旅遊偏好分析 Agent",
@@ -239,7 +254,7 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         goal=PREFERENCE_ANALYST_GOAL,
         # backstory 規範 Agent 的資料邊界、處理原則與輸出方式
         backstory=PREFERENCE_ANALYST_BACKSTORY,
-        # 使用所有 Agent 共用的 LLM
+        # 指定前面建立的共用 LLM
         llm=llm,
         # 只有旅遊偏好分析 Agent 可以檢索使用者過往旅遊紀錄
         knowledge_sources=[TRAVEL_RECORDS],
@@ -251,7 +266,7 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         verbose=True,
     )
 
-    # 旅遊情報研究 Agent 持有搜尋、天氣與匯率三個 MCP 工具
+    # 建立旅遊情報研究 Agent；這位 Agent 持有搜尋、天氣與匯率三個 MCP 工具
     travel_researcher = Agent(
         # role 必須與 Manager 可委派的 coworker 名稱一致
         role="旅遊情報研究 Agent",
@@ -260,10 +275,12 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         backstory=TRAVEL_RESEARCHER_BACKSTORY,
         # 使用所有 Agent 共用的 LLM
         llm=llm,
-        # 只傳入 Tavily、天氣與匯率三個即時資訊工具
+        # 從 Adapter 回傳的工具清單中，只選出本 Lab 需要的三個即時資訊工具
         tools=[
+            # 逐一檢查每個 MCP 工具名稱
             tool
             for tool in tools
+            # 工具名稱符合指定集合時才交給旅遊情報研究 Agent
             if tool.name in {"tavily_search", "get_forecast", "get_rates"}
         ],
         # 限制研究輪數，避免單次委派持續擴張搜尋範圍
@@ -272,7 +289,7 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         verbose=True,
     )
 
-    # 個人化行程規劃 Agent 負責彙整結果，並可依 Skill 將完成版行程儲存成 Markdown
+    # 建立個人化行程規劃 Agent；負責彙整結果，並可依 Skill 匯出完成版行程
     itinerary_planner = Agent(
         # role 必須與 Manager 可委派的 coworker 名稱一致
         role="個人化行程規劃 Agent",
@@ -281,7 +298,7 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         backstory=ITINERARY_PLANNER_BACKSTORY,
         # 使用所有 Agent 共用的 LLM
         llm=llm,
-        # FileWriterTool 將寫入範圍限制在專案 exports/ 目錄
+        # FileWriterTool 將檔案寫入範圍限制在專案 exports/ 資料夾
         tools=[FileWriterTool(base_dir=str(PROJECT_DIR / "exports"))],
         # Skill 提供匯出 Markdown 時要遵循的觸發條件、檔名與寫檔流程
         skills=[MARKDOWN_EXPORT_SKILL],
@@ -291,7 +308,7 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         verbose=True,
     )
 
-    # Manager 負責動態委派、審查與整合，不直接持有知識庫或外部工具
+    # 建立 Manager Agent；負責動態委派、審查與整合，不直接持有 Knowledge 或外部工具
     manager = Agent(
         # Manager 角色名稱會顯示在 Hierarchical Process 的執行紀錄中
         role="Manager Agent",
@@ -300,7 +317,7 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         backstory=MANAGER_BACKSTORY,
         # Manager 與 Worker 共用相同的 LLM
         llm=llm,
-        # 開啟委派能力，讓 Manager 可以將工作交給三位 Worker
+        # 開啟委派能力，讓 Manager 能依需求將子工作交給三位 Worker Agent
         allow_delegation=True,
         # 允許完成必要委派，並保留一次審查後修正的空間
         max_iter=10,
@@ -308,6 +325,5 @@ def build_agents(llm: LLM, tools: list) -> tuple[Agent, list[Agent]]:
         verbose=True,
     )
 
-    # Hierarchical Process 會透過 manager_agent 接收 Manager，
-    # 因此回傳的 workers 清單只包含可被委派的三位 Agent
+    # 回傳 Manager 與 Worker 清單；Hierarchical Process 會分別放入 manager_agent 與 agents
     return manager, [preference_analyst, travel_researcher, itinerary_planner]
