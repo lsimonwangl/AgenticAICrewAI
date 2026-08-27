@@ -18,6 +18,7 @@ from crewai import Flow
 from crewai.events.utils.console_formatter import ConsoleFormatter
 from crewai.experimental.conversational import ConversationState
 from crewai.flow import listen
+from crewai_tools.adapters.tool_collection import ToolCollection
 
 from crew import build_crew
 from tools import start_mcp_tools
@@ -35,7 +36,7 @@ class TravelFlow(Flow[ConversationState]):
     conversational = True
 
     # 保存 main() 啟動的 MCP 工具清單，供每輪新建立的 Crew 共用
-    mcp_tools: list
+    mcp_tools: ToolCollection
 
     def route_turn(self, context: dict) -> str:
         """所有旅遊問題都交給 Crew，工作流程由 Manager 動態判斷。"""
@@ -58,7 +59,7 @@ class TravelFlow(Flow[ConversationState]):
         # 每輪建立新的 Crew，避免上一輪的 Manager 與 Task 狀態影響後續委派
         crew = build_crew(self.mcp_tools)
 
-        # 清除上一輪的完成事件，讓本輪重新等待 Crew Completion 面板
+        # 清除上一輪的完成事件，讓本輪重新等待 Crew 完成
         ConsoleFormatter.crew_completion_printed.clear()
 
         # 將本輪問題、今天日期與 Flow 保存的對話背景交給通用 Task
@@ -70,7 +71,7 @@ class TravelFlow(Flow[ConversationState]):
             }
         )
 
-        # 等待 Crew 完成面板輸出，避免背景輸出插入下一輪的輸入提示
+        # 最多等待 10 秒，避免背景完成事件插入下一輪的輸入提示
         ConsoleFormatter.crew_completion_printed.wait(timeout=10)
         # 將 CrewOutput 轉成字串，交給 Flow 保存並顯示給使用者
         return str(result)
@@ -80,7 +81,7 @@ class TravelFlow(Flow[ConversationState]):
 
 def main() -> None:
     """啟動 MCP 工具，並使用 Flow.chat() 進行多輪對話。"""
-    # 啟動三個 MCP Server；程式執行期間只啟動一次，後續每輪 Crew 共用連線
+    # 啟動四個 MCP Server；程式執行期間只啟動一次，後續每輪 Crew 共用連線
     adapter, tools = start_mcp_tools()
 
     try:
@@ -102,7 +103,7 @@ def main() -> None:
         TravelFlow(
             # 保存 MCP 工具清單
             mcp_tools=tools,
-            # 隱藏 Flow 自身事件，只顯示 Crew、Agent 與工具的執行紀錄
+            # 隱藏 Flow 自身事件，終端只保留對話提示與最終回答
             suppress_flow_events=True,
             # 關閉背景 Trace，避免額外輸出插入對話畫面
             tracing=False,
