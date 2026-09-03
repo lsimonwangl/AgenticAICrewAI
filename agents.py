@@ -248,7 +248,7 @@ Knowledge 證據過度推論。若結果包含 MCP error、<tool_call>、待取�
 
 # ── 建立一位 Manager Agent 與三位 Worker Agent ───────────────
 
-def build_agents(llm: LLM, tools: ToolCollection) -> tuple[Agent, list[Agent]]:
+def build_agents(nim_llm: LLM, tools: ToolCollection) -> tuple[Agent, list[Agent]]:
     """建立一位 Manager 與三位專責 Worker Agent。"""
     # tools 是 MCPServerAdapter 回傳的 ToolCollection，可直接用名稱取得 MCP 工具
 
@@ -267,7 +267,7 @@ def build_agents(llm: LLM, tools: ToolCollection) -> tuple[Agent, list[Agent]]:
         role="景點與行程規劃 Agent",
         goal=ITINERARY_PLANNER_GOAL,
         backstory=ITINERARY_PLANNER_BACKSTORY,
-        llm=llm,
+        llm=nim_llm,
         # 提供過往旅遊紀錄作為個人化規劃依據
         knowledge_sources=[travel_records],
         embedder=build_embedder(),
@@ -286,7 +286,7 @@ def build_agents(llm: LLM, tools: ToolCollection) -> tuple[Agent, list[Agent]]:
         role="住宿規劃 Agent",
         goal=ACCOMMODATION_PLANNER_GOAL,
         backstory=ACCOMMODATION_PLANNER_BACKSTORY,
-        llm=llm,
+        llm=nim_llm,
         tools=[
             tools["search_hotels_with_rates"],
             tools["get_hotel_details"],
@@ -303,7 +303,7 @@ def build_agents(llm: LLM, tools: ToolCollection) -> tuple[Agent, list[Agent]]:
         role="天氣與交通資訊 Agent",
         goal=WEATHER_TRANSPORT_GOAL,
         backstory=WEATHER_TRANSPORT_BACKSTORY,
-        llm=llm,
+        llm=nim_llm,
         tools=[
             tools["get_forecast"],
             tools["tavily_search"],
@@ -319,7 +319,7 @@ def build_agents(llm: LLM, tools: ToolCollection) -> tuple[Agent, list[Agent]]:
         role="Manager Agent",
         goal=MANAGER_GOAL,
         backstory=MANAGER_BACKSTORY,
-        llm=llm,
+        llm=nim_llm,
         allow_delegation=True,
         # 完整行程需四次主要委派，並保留各階段一次具體修正空間
         max_iter=10,
